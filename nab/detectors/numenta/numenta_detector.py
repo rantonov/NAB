@@ -18,16 +18,19 @@
 # http://numenta.org/licenses/
 # ----------------------------------------------------------------------
 
+import json
 import math
+import os
 
 from nupic.algorithms import anomaly_likelihood
 from nupic.frameworks.opf.common_models.cluster_params import (
-  getScalarMetricWithTimeOfDayAnomalyParams)
+    getScalarMetricWithTimeOfDayAnomalyParams)
+
 try:
-  from nupic.frameworks.opf.model_factory import ModelFactory
+    from nupic.frameworks.opf.model_factory import ModelFactory
 except:
-  # Try importing it the old way (version < 0.7.0.dev0)
-  from nupic.frameworks.opf.modelfactory import ModelFactory
+    # Try importing it the old way (version < 0.7.0.dev0)
+    from nupic.frameworks.opf.modelfactory import ModelFactory
 
 from nab.detectors.base import AnomalyDetector
 
@@ -38,115 +41,125 @@ from nab.detectors.base import AnomalyDetector
 SPATIAL_TOLERANCE = 0.05
 
 
+# Recursively update dictionary
+def patch_dict(d, u):
+    for k, v in u.iteritems():
+        if isinstance(v, dict):
+            d[k] = patch_dict(d.get(k, {}), v)
+        else:
+            d[k] = v
+    return d
+
 
 class NumentaDetector(AnomalyDetector):
-  """
-  This detector uses an HTM based anomaly detection technique.
-  """
-
-  def __init__(self, *args, **kwargs):
-
-    super(NumentaDetector, self).__init__(*args, **kwargs)
-
-    self.model = None
-    self.sensorParams = None
-    self.anomalyLikelihood = None
-    # Keep track of value range for spatial anomaly detection
-    self.minVal = None
-    self.maxVal = None
-
-    # Set this to False if you want to get results based on raw scores
-    # without using AnomalyLikelihood. This will give worse results, but
-    # useful for checking the efficacy of AnomalyLikelihood. You will need
-    # to re-optimize the thresholds when running with this setting.
-    self.useLikelihood = True
-
-
-  def getAdditionalHeaders(self):
-    """Returns a list of strings."""
-    return ["raw_score"]
-
-
-  def handleRecord(self, inputData):
-    """Returns a tuple (anomalyScore, rawScore).
-
-    Internally to NuPIC "anomalyScore" corresponds to "likelihood_score"
-    and "rawScore" corresponds to "anomaly_score". Sorry about that.
     """
-    # Send it to Numenta detector and get back the results
-    result = self.model.run(inputData)
+    This detector uses an HTM based anomaly detection technique.
+    """
 
-    # Get the value
-    value = inputData["value"]
+    def __init__(self, *args, **kwargs):
 
-    # Retrieve the anomaly score and write it to a file
-    rawScore = result.inferences["anomalyScore"]
+        super(NumentaDetector, self).__init__(*args, **kwargs)
 
-    # Update min/max values and check if there is a spatial anomaly
-    spatialAnomaly = False
-    if self.minVal != self.maxVal:
-      tolerance = (self.maxVal - self.minVal) * SPATIAL_TOLERANCE
-      maxExpected = self.maxVal + tolerance
-      minExpected = self.minVal - tolerance
-      if value > maxExpected or value < minExpected:
-        spatialAnomaly = True
-    if self.maxVal is None or value > self.maxVal:
-      self.maxVal = value
-    if self.minVal is None or value < self.minVal:
-      self.minVal = value
+        self.model = None
+        self.sensorParams = None
+        self.anomalyLikelihood = None
+        # Keep track of value range for spatial anomaly detection
+        self.minVal = None
+        self.maxVal = None
 
-    if self.useLikelihood:
-      # Compute log(anomaly likelihood)
-      anomalyScore = self.anomalyLikelihood.anomalyProbability(
-        inputData["value"], rawScore, inputData["timestamp"])
-      logScore = self.anomalyLikelihood.computeLogLikelihood(anomalyScore)
-      finalScore = logScore
-    else:
-      finalScore = rawScore
+        # Set this to False if you want to get results based on raw scores
+        # without using AnomalyLikelihood. This will give worse results, but
+        # useful for checking the efficacy of AnomalyLikelihood. You will need
+        # to re-optimize the thresholds when running with this setting.
+        self.useLikelihood = True
 
-    if spatialAnomaly:
-      finalScore = 1.0
+    def getAdditionalHeaders(self):
+        """Returns a list of strings."""
+        return ["raw_score"]
 
-    return (finalScore, rawScore)
+    def handleRecord(self, inputData):
+        """Returns a tuple (anomalyScore, rawScore).
 
+        Internally to NuPIC "anomalyScore" corresponds to "likelihood_score"
+        and "rawScore" corresponds to "anomaly_score". Sorry about that.
+        """
+        # Send it to Numenta detector and get back the results
+        result = self.model.run(inputData)
 
-  def initialize(self):
-    # Get config params, setting the RDSE resolution
-    rangePadding = abs(self.inputMax - self.inputMin) * 0.2
-    modelParams = getScalarMetricWithTimeOfDayAnomalyParams(
-      metricData=[0],
-      minVal=self.inputMin-rangePadding,
-      maxVal=self.inputMax+rangePadding,
-      minResolution=0.001,
-      tmImplementation = "cpp"
-    )["modelConfig"]
+        # Get the value
+        value = inputData["value"]
 
-    self._setupEncoderParams(
-      modelParams["modelParams"]["sensorParams"]["encoders"])
+        # Retrieve the anomaly score and write it to a file
+        rawScore = result.inferences["anomalyScore"]
 
-    self.model = ModelFactory.create(modelParams)
+        # Update min/max values and check if there is a spatial anomaly
+        spatialAnomaly = False
+        if self.minVal != self.maxVal:
+            tolerance = (self.maxVal - self.minVal) * SPATIAL_TOLERANCE
+            maxExpected = self.maxVal + tolerance
+            minExpected = self.minVal - tolerance
+            if value > maxExpected or value < minExpected:
+                spatialAnomaly = True
+        if self.maxVal is None or value > self.maxVal:
+            self.maxVal = value
+        if self.minVal is None or value < self.minVal:
+            self.minVal = value
 
-    self.model.enableInference({"predictedField": "value"})
+        if self.useLikelihood:
+            # Compute log(anomaly likelihood)
+            anomalyScore = self.anomalyLikelihood.anomalyProbability(
+                inputData["value"], rawScore, inputData["timestamp"])
+            logScore = self.anomalyLikelihood.computeLogLikelihood(anomalyScore)
+            finalScore = logScore
+        else:
+            finalScore = rawScore
 
-    if self.useLikelihood:
-      # Initialize the anomaly likelihood object
-      numentaLearningPeriod = int(math.floor(self.probationaryPeriod / 2.0))
-      self.anomalyLikelihood = anomaly_likelihood.AnomalyLikelihood(
-        learningPeriod=numentaLearningPeriod,
-        estimationSamples=self.probationaryPeriod-numentaLearningPeriod,
-        reestimationPeriod=100
-      )
+        if spatialAnomaly:
+            finalScore = 1.0
 
+        return (finalScore, rawScore)
 
-  def _setupEncoderParams(self, encoderParams):
-    # The encoder must expect the NAB-specific datafile headers
-    encoderParams["timestamp_dayOfWeek"] = encoderParams.pop("c0_dayOfWeek")
-    encoderParams["timestamp_timeOfDay"] = encoderParams.pop("c0_timeOfDay")
-    encoderParams["timestamp_timeOfDay"]["fieldname"] = "timestamp"
-    encoderParams["timestamp_timeOfDay"]["name"] = "timestamp"
-    encoderParams["timestamp_weekend"] = encoderParams.pop("c0_weekend")
-    encoderParams["value"] = encoderParams.pop("c1")
-    encoderParams["value"]["fieldname"] = "value"
-    encoderParams["value"]["name"] = "value"
+    def initialize(self):
+        # Get config params, setting the RDSE resolution
+        rangePadding = abs(self.inputMax - self.inputMin) * 0.2
+        modelParams = getScalarMetricWithTimeOfDayAnomalyParams(
+            metricData=[0],
+            minVal=self.inputMin - rangePadding,
+            maxVal=self.inputMax + rangePadding,
+            minResolution=0.001,
+            tmImplementation="cpp"
+        )["modelConfig"]
 
-    self.sensorParams = encoderParams["value"]
+        self._setupEncoderParams(
+            modelParams["modelParams"]["sensorParams"]["encoders"])
+
+        model_params_patch_file = os.path.join('grok_params', 'nab_params_1024.json')
+
+        model_params_patch = json.load(open(model_params_patch_file))
+        model_params = patch_dict(modelParams, model_params_patch)
+
+        self.model = ModelFactory.create(model_params)
+
+        self.model.enableInference({"predictedField": "value"})
+
+        if self.useLikelihood:
+            # Initialize the anomaly likelihood object
+            numentaLearningPeriod = int(math.floor(self.probationaryPeriod / 2.0))
+            self.anomalyLikelihood = anomaly_likelihood.AnomalyLikelihood(
+                learningPeriod=numentaLearningPeriod,
+                estimationSamples=self.probationaryPeriod - numentaLearningPeriod,
+                reestimationPeriod=100
+            )
+
+    def _setupEncoderParams(self, encoderParams):
+        # The encoder must expect the NAB-specific datafile headers
+        encoderParams["timestamp_dayOfWeek"] = encoderParams.pop("c0_dayOfWeek")
+        encoderParams["timestamp_timeOfDay"] = encoderParams.pop("c0_timeOfDay")
+        encoderParams["timestamp_timeOfDay"]["fieldname"] = "timestamp"
+        encoderParams["timestamp_timeOfDay"]["name"] = "timestamp"
+        encoderParams["timestamp_weekend"] = encoderParams.pop("c0_weekend")
+        encoderParams["value"] = encoderParams.pop("c1")
+        encoderParams["value"]["fieldname"] = "value"
+        encoderParams["value"]["name"] = "value"
+
+        self.sensorParams = encoderParams["value"]
