@@ -1,0 +1,13 @@
+{
+  "modelParams": {
+    "spParams": {
+      "columnCount": 1024,
+      "numActiveColumnsPerInhArea": 28
+    },
+    "tmParams": {
+      "columnCount": 1024,
+      "cellsPerColumn": 16,
+      "inputWidth": 1024
+    }
+  }
+}
